@@ -1,6 +1,6 @@
 # SecureBootCA2023Check
 
-Win11 x64 console tool to check whether the system Secure Boot databases (`db`/`KEK`) contain a certificate whose DER bytes include the ASCII string **"Microsoft UEFI CA 2023"**.
+Win11 x64 Win32-GUI-Tool (ohne Konsole) zum Prüfen, ob die Secure-Boot-Datenbanken (`db`/`KEK`) ein Zertifikat enthalten, dessen DER-Bytes den ASCII-String **"Microsoft UEFI CA 2023"** enthalten.
 
 ## Run
 Run from an elevated (Admin) console.

@@ -1,7 +1,6 @@
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
-#include <stdio.h>
 #include <stdint.h>
 
 static const wchar_t *EFI_GLOBAL_VARIABLE_GUID = L"{8BE4DF61-93CA-11D2-AA0D-00E098032B8C}";
@@ -122,40 +121,75 @@ static int search_uefi_var_for_string(const wchar_t *varName, const char *needle
     return -1;
 }
 
-int wmain(void) {
+static void show_result_gui(int exitCode, int secureBootKnown, int secureBootEnabled, int presentKnown, int present) {
+    wchar_t title[128] = L"Secure Boot Check";
+    wchar_t msg[2048] = L"";
+
+    wcscat_s(msg, 2048, L"Ergebnis (für Laien):\r\n\r\n");
+
+    if (secureBootKnown) {
+        wcscat_s(msg, 2048, L"• Secure Boot: ");
+        wcscat_s(msg, 2048, secureBootEnabled ? L"AKTIV\r\n" : L"AUS\r\n");
+    } else {
+        wcscat_s(msg, 2048, L"• Secure Boot: Unbekannt (konnte nicht ausgelesen werden)\r\n");
+    }
+
+    if (presentKnown) {
+        wcscat_s(msg, 2048, L"• Microsoft UEFI CA 2023: ");
+        wcscat_s(msg, 2048, present ? L"VORHANDEN\r\n" : L"NICHT VORHANDEN\r\n");
+    } else {
+        wcscat_s(msg, 2048, L"• Microsoft UEFI CA 2023: Unbekannt (kein Zugriff/Fehler)\r\n");
+    }
+
+    wcscat_s(msg, 2048, L"\r\nHinweis: Falls hier \"Unbekannt\" steht, bitte per Rechtsklick → \"Als Administrator ausführen\" starten.");
+
+    UINT icon = MB_ICONINFORMATION;
+    if (exitCode == 0) icon = MB_ICONINFORMATION;
+    else if (exitCode == 1) icon = MB_ICONWARNING;
+    else if (exitCode == 2) icon = MB_ICONWARNING;
+    else icon = MB_ICONERROR;
+
+    MessageBoxW(NULL, msg, title, MB_OK | icon);
+}
+
+int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmdLine, int nShow) {
+    (void)hInst; (void)hPrev; (void)cmdLine; (void)nShow;
+
     const char *needle = "Microsoft UEFI CA 2023";
 
-    printf("SecureBootCA2023Check\n");
-
     if (!enable_system_environment_privilege()) {
-        printf("ERROR: Need admin (SeSystemEnvironmentPrivilege).\n");
+        show_result_gui(3, 0, 0, 0, 0);
         return 3;
     }
 
-    // Best-effort Secure Boot state
+    int secureBootKnown = 0;
+    int secureBootEnabled = 0;
+
     uint8_t sb = 0;
     DWORD attrs = 0;
     DWORD got = GetFirmwareEnvironmentVariableExW(L"SecureBoot", EFI_GLOBAL_VARIABLE_GUID, &sb, sizeof(sb), &attrs);
     if (got != 0) {
-        printf("SecureBoot: %s\n", sb ? "Enabled" : "Disabled");
-        if (!sb) {
-            printf("Microsoft UEFI CA 2023: UNKNOWN (Secure Boot off)\n");
+        secureBootKnown = 1;
+        secureBootEnabled = sb ? 1 : 0;
+        if (!secureBootEnabled) {
+            // Secure Boot off → we can't reliably assert CA presence
+            show_result_gui(2, secureBootKnown, secureBootEnabled, 0, 0);
             return 2;
         }
-    } else {
-        printf("WARN: Could not read SecureBoot variable (continuing). Error=%lu\n", GetLastError());
     }
 
     int hit_db  = search_uefi_var_for_string(L"db",  needle);
     int hit_kek = search_uefi_var_for_string(L"KEK", needle);
 
-    if (hit_db < 0 && hit_kek < 0) {
-        printf("ERROR: Failed to read UEFI variables db/KEK (db=%d, KEK=%d).\n", hit_db, hit_kek);
+    int presentKnown = ! (hit_db < 0 && hit_kek < 0);
+    if (!presentKnown) {
+        show_result_gui(3, secureBootKnown, secureBootEnabled, 0, 0);
         return 3;
     }
 
     int present = (hit_db == 1) || (hit_kek == 1);
-    printf("Microsoft UEFI CA 2023: %s\n", present ? "PRESENT" : "NOT PRESENT");
+    int exitCode = present ? 0 : 1;
 
-    return present ? 0 : 1;
+    show_result_gui(exitCode, secureBootKnown, secureBootEnabled, 1, present);
+    return exitCode;
 }
