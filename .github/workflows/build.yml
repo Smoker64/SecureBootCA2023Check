@@ -1,0 +1,35 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  winbuild:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build (Release x64)
+        shell: pwsh
+        run: |
+          msbuild .\\secureboot-ca2023check\\SecureBootCA2023Check.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 /m
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecureBootCA2023Check-win11-x64
+          path: secureboot-ca2023check\\x64\\Release\\SecureBootCA2023Check.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, refs/tags/)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: secureboot-ca2023check\\x64\\Release\\SecureBootCA2023Check.exe
