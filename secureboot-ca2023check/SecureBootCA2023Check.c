@@ -122,7 +122,7 @@ static int search_uefi_var_for_string(const wchar_t *varName, const char *needle
 }
 
 static void show_result_gui(int exitCode, int secureBootKnown, int secureBootEnabled, int presentKnown, int present) {
-    wchar_t title[128] = L"Secure Boot Check";
+    wchar_t title[128] = L"2nd Shop Secureboot Checker";
     wchar_t msg[2048] = L"";
 
     wcscat_s(msg, 2048, L"Ergebnis (für Laien):\r\n\r\n");
@@ -141,7 +141,7 @@ static void show_result_gui(int exitCode, int secureBootKnown, int secureBootEna
         wcscat_s(msg, 2048, L"• Microsoft UEFI CA 2023: Unbekannt (kein Zugriff/Fehler)\r\n");
     }
 
-    wcscat_s(msg, 2048, L"\r\nHinweis: Falls hier \"Unbekannt\" steht, bitte per Rechtsklick → \"Als Administrator ausführen\" starten.");
+    wcscat_s(msg, 2048, L"\r\nHinweis: Falls hier \"Unbekannt\" steht, bitte per Rechtsklick -> \"Als Administrator ausfuehren\" starten.");
 
     UINT icon = MB_ICONINFORMATION;
     if (exitCode == 0) icon = MB_ICONINFORMATION;
