@@ -131,27 +131,54 @@ static int analyze_uefi_var(const wchar_t *varName, UEFIVarInfo *info) {
     info->signatureCount = 0;
     info->hasCA2023 = 0;
 
-    // Check for CA 2023 strings
-    const char *needles[] = {"Microsoft UEFI CA 2023", "Windows UEFI CA 2023"};
-    for (int n = 0; n < 2; n++) {
+    // Check for CA 2023 strings - multiple variants for robustness
+    const char *needles[] = {
+        "Microsoft UEFI CA 2023", 
+        "Windows UEFI CA 2023",
+        "UEFI CA 2023",
+        "CA 2023"
+    };
+    for (int n = 0; n < 4; n++) {
         if (contains_ascii_case_insensitive(buf, size, needles[n])) {
             info->hasCA2023 = 1;
             break;
         }
     }
 
-    // Count signature lists
+    // Count signature lists and check within signature data too
     size_t off = 0;
     while (off + sizeof(EFI_SIGNATURE_LIST) <= size) {
         EFI_SIGNATURE_LIST *list = (EFI_SIGNATURE_LIST*)(buf + off);
         if (list->SignatureListSize < sizeof(EFI_SIGNATURE_LIST)) break;
         if (off + list->SignatureListSize > size) break;
 
-        size_t sigOff = off + sizeof(EFI_SIGNATURE_LIST) + list->SignatureHeaderSize;
+        size_t headerOff = off + sizeof(EFI_SIGNATURE_LIST);
+        size_t sigOff = headerOff + list->SignatureHeaderSize;
+        if (sigOff > off + list->SignatureListSize) break;
+
         if (list->SignatureSize > 0) {
             size_t sigBlockLen = list->SignatureListSize - (sizeof(EFI_SIGNATURE_LIST) + list->SignatureHeaderSize);
             size_t count = sigBlockLen / list->SignatureSize;
             info->signatureCount += (int)count;
+            
+            // Also check inside each signature for CA 2023
+            if (!info->hasCA2023) {
+                for (size_t i = 0; i < count && !info->hasCA2023; i++) {
+                    size_t oneOff = sigOff + i * list->SignatureSize;
+                    size_t dataOff = oneOff + sizeof(GUID);
+                    if (dataOff <= off + list->SignatureListSize) {
+                        size_t dataLen = list->SignatureSize - sizeof(GUID);
+                        if (dataOff + dataLen <= off + list->SignatureListSize) {
+                            for (int n = 0; n < 4; n++) {
+                                if (contains_ascii_case_insensitive(buf + dataOff, dataLen, needles[n])) {
+                                    info->hasCA2023 = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         off += list->SignatureListSize;
@@ -181,24 +208,40 @@ static void add_listview_item(const UEFIVarInfo *info) {
 
     // Column 1: Size
     wchar_t szSize[32];
-    swprintf_s(szSize, 32, L"%lu Bytes", info->size);
+    if (info->size > 0) {
+        swprintf_s(szSize, 32, L"%lu Bytes", info->size);
+    } else {
+        wcscpy_s(szSize, 32, L"nicht lesbar");
+    }
     ListView_SetItemText(g_hListView, idx, 1, szSize);
 
     // Column 2: Signature count
     wchar_t szCount[32];
-    swprintf_s(szCount, 32, L"%d", info->signatureCount);
+    if (info->size > 0) {
+        swprintf_s(szCount, 32, L"%d", info->signatureCount);
+    } else {
+        wcscpy_s(szCount, 32, L"-");
+    }
     ListView_SetItemText(g_hListView, idx, 2, szCount);
 
     // Column 3: CA 2023 present
-    ListView_SetItemText(g_hListView, idx, 3, info->hasCA2023 ? L"Ja" : L"Nein");
+    if (info->size > 0) {
+        ListView_SetItemText(g_hListView, idx, 3, info->hasCA2023 ? L"✓ Ja" : L"Nein");
+    } else {
+        ListView_SetItemText(g_hListView, idx, 3, L"-");
+    }
 
     // Column 4: Last Write (simplified - we don't have actual timestamp from UEFI)
-    SYSTEMTIME st;
-    FileTimeToSystemTime(&info->lastWrite, &st);
-    wchar_t szTime[64];
-    swprintf_s(szTime, 64, L"%04d-%02d-%02d %02d:%02d", 
-               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
-    ListView_SetItemText(g_hListView, idx, 4, szTime);
+    if (info->size > 0) {
+        SYSTEMTIME st;
+        FileTimeToSystemTime(&info->lastWrite, &st);
+        wchar_t szTime[64];
+        swprintf_s(szTime, 64, L"%04d-%02d-%02d %02d:%02d", 
+                   st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+        ListView_SetItemText(g_hListView, idx, 4, szTime);
+    } else {
+        ListView_SetItemText(g_hListView, idx, 4, L"-");
+    }
 }
 
 static void on_button_read_vars(void) {
@@ -226,32 +269,65 @@ static void on_button_check_windows(void) {
     
     int secureBootActive = (got != 0 && sb != 0);
     
-    // Check for CA 2023 in db/KEK
-    UEFIVarInfo dbInfo = {0}, kekInfo = {0};
-    analyze_uefi_var(L"db", &dbInfo);
-    analyze_uefi_var(L"KEK", &kekInfo);
+    // Check for CA 2023 in db/KEK  
+    UEFIVarInfo dbInfo = {0}, kekInfo = {0}, pkInfo = {0};
+    int dbRes = analyze_uefi_var(L"db", &dbInfo);
+    int kekRes = analyze_uefi_var(L"KEK", &kekInfo);
+    analyze_uefi_var(L"PK", &pkInfo);
     
-    int hasCA2023 = dbInfo.hasCA2023 || kekInfo.hasCA2023;
+    int hasCA2023InDb = (dbRes > 0 && dbInfo.hasCA2023);
+    int hasCA2023InKek = (kekRes > 0 && kekInfo.hasCA2023);
+    int hasCA2023 = hasCA2023InDb || hasCA2023InKek;
 
-    wchar_t result[512] = L"";
+    wchar_t result[1024] = L"";
+    wchar_t details[512] = L"";
+    
+    // Build detailed status
+    swprintf_s(details, 512, 
+        L"Details:\n"
+        L"• Secure Boot: %s\n"
+        L"• PK: %s (%lu Bytes, %d Einträge)\n"
+        L"• KEK: %s (%lu Bytes, %d Einträge, CA2023: %s)\n"
+        L"• db: %s (%lu Bytes, %d Einträge, CA2023: %s)\n\n",
+        secureBootActive ? L"AKTIV" : L"INAKTIV",
+        pkInfo.size > 0 ? L"vorhanden" : L"nicht lesbar",
+        pkInfo.size, pkInfo.signatureCount,
+        kekRes > 0 ? L"vorhanden" : L"nicht lesbar",
+        kekInfo.size, kekInfo.signatureCount,
+        hasCA2023InKek ? L"JA" : L"nein",
+        dbRes > 0 ? L"vorhanden" : L"nicht lesbar",
+        dbInfo.size, dbInfo.signatureCount,
+        hasCA2023InDb ? L"JA" : L"nein"
+    );
     
     if (secureBootActive && hasCA2023) {
-        wcscpy_s(result, 512, L"✓ JA, sehr wahrscheinlich\n\n"
-                              L"• Secure Boot: AKTIV\n"
-                              L"• UEFI CA 2023: VORHANDEN\n\n"
-                              L"Windows nutzt wahrscheinlich das neuere Zertifikat.");
+        swprintf_s(result, 1024, 
+            L"✓ JA, sehr wahrscheinlich\n\n"
+            L"Secure Boot ist aktiv und UEFI CA 2023 wurde gefunden.\n"
+            L"Windows nutzt wahrscheinlich das neuere Zertifikat.\n\n%s",
+            details);
+        MessageBoxW(g_hMainWnd, result, L"Windows Zertifikatsnutzung", 
+                   MB_OK | MB_ICONINFORMATION);
     } else if (!secureBootActive) {
-        wcscpy_s(result, 512, L"✗ NEIN / UNKLAR\n\n"
-                              L"• Secure Boot: NICHT AKTIV\n\n"
-                              L"Ohne aktives Secure Boot kann keine Aussage getroffen werden.");
+        swprintf_s(result, 1024,
+            L"⚠ UNKLAR\n\n"
+            L"Secure Boot ist nicht aktiv.\n"
+            L"Ohne aktives Secure Boot kann keine verlässliche\n"
+            L"Aussage über die Zertifikatsnutzung getroffen werden.\n\n%s",
+            details);
+        MessageBoxW(g_hMainWnd, result, L"Windows Zertifikatsnutzung", 
+                   MB_OK | MB_ICONWARNING);
     } else {
-        wcscpy_s(result, 512, L"✗ NEIN\n\n"
-                              L"• Secure Boot: AKTIV\n"
-                              L"• UEFI CA 2023: NICHT VORHANDEN\n\n"
-                              L"Das neuere Zertifikat wurde nicht gefunden.");
+        swprintf_s(result, 1024,
+            L"✗ NEIN\n\n"
+            L"Secure Boot ist aktiv, aber UEFI CA 2023 wurde\n"
+            L"nicht in den Secure Boot Variablen gefunden.\n\n"
+            L"Das System nutzt wahrscheinlich noch ältere Zertifikate.\n\n%s",
+            details);
+        MessageBoxW(g_hMainWnd, result, L"Windows Zertifikatsnutzung", 
+                   MB_OK | MB_ICONWARNING);
     }
 
-    MessageBoxW(g_hMainWnd, result, L"Windows Zertifikatsnutzung", MB_OK | MB_ICONINFORMATION);
     update_status_label(L"Prüfung abgeschlossen.");
 }
 
