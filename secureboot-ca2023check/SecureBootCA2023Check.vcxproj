@@ -45,7 +45,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="SecureBootCA2023Check.c" />
-    <ResourceCompile Include="SecureBootCA2023Check.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
 </Project>
