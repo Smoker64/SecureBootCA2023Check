@@ -54,7 +54,7 @@ static int enable_system_environment_privilege(void) {
     return err == ERROR_SUCCESS;
 }
 
-static int search_uefi_var_for_string(const wchar_t *varName, const char *needle) {
+static int search_uefi_var_for_string_any(const wchar_t *varName, const char **needles, size_t needleCount) {
     DWORD attrs = 0;
 
     DWORD bufSize = 64 * 1024;
@@ -78,9 +78,11 @@ static int search_uefi_var_for_string(const wchar_t *varName, const char *needle
         size_t len = (size_t)got;
 
         // Fast raw scan
-        if (contains_ascii_case_insensitive(buf, len, needle)) {
-            HeapFree(GetProcessHeap(), 0, buf);
-            return 1;
+        for (size_t n = 0; n < needleCount; n++) {
+            if (contains_ascii_case_insensitive(buf, len, needles[n])) {
+                HeapFree(GetProcessHeap(), 0, buf);
+                return 1;
+            }
         }
 
         // Light parsing of EFI_SIGNATURE_LIST blocks; scan each signature blob
@@ -105,9 +107,11 @@ static int search_uefi_var_for_string(const wchar_t *varName, const char *needle
                 size_t dataLen = list->SignatureSize - sizeof(GUID);
                 if (dataOff + dataLen > off + list->SignatureListSize) break;
 
-                if (contains_ascii_case_insensitive(buf + dataOff, dataLen, needle)) {
-                    HeapFree(GetProcessHeap(), 0, buf);
-                    return 1;
+                for (size_t n = 0; n < needleCount; n++) {
+                    if (contains_ascii_case_insensitive(buf + dataOff, dataLen, needles[n])) {
+                        HeapFree(GetProcessHeap(), 0, buf);
+                        return 1;
+                    }
                 }
             }
 
@@ -135,10 +139,10 @@ static void show_result_gui(int exitCode, int secureBootKnown, int secureBootEna
     }
 
     if (presentKnown) {
-        wcscat_s(msg, 2048, L"• Microsoft UEFI CA 2023: ");
+        wcscat_s(msg, 2048, L"• UEFI CA 2023 (Microsoft/Windows): ");
         wcscat_s(msg, 2048, present ? L"VORHANDEN\r\n" : L"NICHT VORHANDEN\r\n");
     } else {
-        wcscat_s(msg, 2048, L"• Microsoft UEFI CA 2023: Unbekannt (kein Zugriff/Fehler)\r\n");
+        wcscat_s(msg, 2048, L"• UEFI CA 2023 (Microsoft/Windows): Unbekannt (kein Zugriff/Fehler)\r\n");
     }
 
     wcscat_s(msg, 2048, L"\r\nHinweis: Falls hier \"Unbekannt\" steht, bitte per Rechtsklick → „Als Administrator ausführen“ starten.");
@@ -155,7 +159,8 @@ static void show_result_gui(int exitCode, int secureBootKnown, int secureBootEna
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmdLine, int nShow) {
     (void)hInst; (void)hPrev; (void)cmdLine; (void)nShow;
 
-    const char *needle = "Microsoft UEFI CA 2023";
+    const char *needles[] = {"Microsoft UEFI CA 2023", "Windows UEFI CA 2023"};
+    const size_t needleCount = sizeof(needles) / sizeof(needles[0]);
 
     if (!enable_system_environment_privilege()) {
         show_result_gui(3, 0, 0, 0, 0);
@@ -178,8 +183,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmdLine, int nShow) 
         }
     }
 
-    int hit_db  = search_uefi_var_for_string(L"db",  needle);
-    int hit_kek = search_uefi_var_for_string(L"KEK", needle);
+    int hit_db  = search_uefi_var_for_string_any(L"db",  needles, needleCount);
+    int hit_kek = search_uefi_var_for_string_any(L"KEK", needles, needleCount);
 
     int presentKnown = ! (hit_db < 0 && hit_kek < 0);
     if (!presentKnown) {
