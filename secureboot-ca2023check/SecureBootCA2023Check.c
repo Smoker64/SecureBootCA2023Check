@@ -25,8 +25,8 @@ static int contains_ascii_case_insensitive(const uint8_t *buf, size_t len, const
         for (; j < nlen; j++) {
             unsigned char c = buf[i + j];
             unsigned char d = (unsigned char)needle[j];
-            if (c >= A && c <= Z) c = (unsigned char)(c - A + a);
-            if (d >= A && d <= Z) d = (unsigned char)(d - A + a);
+            if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+            if (d >= 'A' && d <= 'Z') d = (unsigned char)(d - 'A' + 'a');
             if (c != d) break;
         }
         if (j == nlen) return 1;
