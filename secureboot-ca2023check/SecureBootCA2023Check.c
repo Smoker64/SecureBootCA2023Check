@@ -78,6 +78,64 @@ static int contains_ascii_case_insensitive(const uint8_t *buf, size_t len, const
     return 0;
 }
 
+// Try PowerShell method as fallback
+static int read_uefi_variable_via_powershell(const wchar_t *varName, uint8_t **outBuf, DWORD *outSize) {
+    wchar_t cmd[512];
+    swprintf_s(cmd, 512, 
+        L"powershell.exe -NoProfile -Command \"$var = Get-SecureBootUEFI -Name %s -ErrorAction SilentlyContinue; if ($var) { [Console]::OpenStandardOutput().Write($var.bytes, 0, $var.bytes.Length) }\"",
+        varName);
+    
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    HANDLE hReadPipe, hWritePipe;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) return -1;
+    
+    STARTUPINFOW si = {sizeof(si)};
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.hStdOutput = hWritePipe;
+    si.hStdError = hWritePipe;
+    si.wShowWindow = SW_HIDE;
+    
+    PROCESS_INFORMATION pi = {0};
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        CloseHandle(hReadPipe);
+        CloseHandle(hWritePipe);
+        return -1;
+    }
+    
+    CloseHandle(hWritePipe);
+    
+    // Read output
+    DWORD bufSize = 1024 * 1024; // 1 MB
+    uint8_t *buf = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bufSize);
+    if (!buf) {
+        CloseHandle(hReadPipe);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return -1;
+    }
+    
+    DWORD totalRead = 0;
+    DWORD bytesRead;
+    while (ReadFile(hReadPipe, buf + totalRead, bufSize - totalRead, &bytesRead, NULL) && bytesRead > 0) {
+        totalRead += bytesRead;
+        if (totalRead >= bufSize) break;
+    }
+    
+    CloseHandle(hReadPipe);
+    WaitForSingleObject(pi.hProcess, 30000); // 30 sec timeout
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    
+    if (totalRead > 0) {
+        *outBuf = buf;
+        *outSize = totalRead;
+        return 1;
+    }
+    
+    HeapFree(GetProcessHeap(), 0, buf);
+    return -1;
+}
+
 static int read_uefi_variable(const wchar_t *varName, uint8_t **outBuf, DWORD *outSize, FILETIME *outLastWrite) {
     DWORD attrs = 0;
     
@@ -103,6 +161,15 @@ static int read_uefi_variable(const wchar_t *varName, uint8_t **outBuf, DWORD *o
                     return -1;
                 }
                 continue;
+            }
+            
+            // Try PowerShell method as fallback for db/dbx
+            if (wcscmp(varName, L"db") == 0 || wcscmp(varName, L"dbx") == 0) {
+                int psResult = read_uefi_variable_via_powershell(varName, outBuf, outSize);
+                if (psResult > 0) {
+                    GetSystemTimeAsFileTime(outLastWrite);
+                    return 1;
+                }
             }
             
             // Other errors
