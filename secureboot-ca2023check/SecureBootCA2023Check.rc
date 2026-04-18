@@ -1,4 +1,0 @@
-#include <windows.h>
-
-// Embed the manifest to request admin rights
-1 RT_MANIFEST "SecureBootCA2023Check.manifest"
