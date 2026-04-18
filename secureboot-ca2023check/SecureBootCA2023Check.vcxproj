@@ -36,12 +36,11 @@
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalOptions>/MANIFEST:EMBED /MANIFESTINPUT:SecureBootCA2023Check.manifest %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="SecureBootCA2023Check.c" />
-    <Manifest Include="SecureBootCA2023Check.manifest" />
+    <ResourceCompile Include="SecureBootCA2023Check.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
 </Project>
