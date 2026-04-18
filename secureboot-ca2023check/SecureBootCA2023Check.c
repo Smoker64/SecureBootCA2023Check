@@ -141,7 +141,7 @@ static void show_result_gui(int exitCode, int secureBootKnown, int secureBootEna
         wcscat_s(msg, 2048, L"• Microsoft UEFI CA 2023: Unbekannt (kein Zugriff/Fehler)\r\n");
     }
 
-    wcscat_s(msg, 2048, L"\r\nHinweis: Falls hier \"Unbekannt\" steht, bitte per Rechtsklick -> \"Als Administrator ausfuehren\" starten.");
+    wcscat_s(msg, 2048, L"\r\nHinweis: Falls hier \"Unbekannt\" steht, bitte per Rechtsklick → „Als Administrator ausführen“ starten.");
 
     UINT icon = MB_ICONINFORMATION;
     if (exitCode == 0) icon = MB_ICONINFORMATION;
