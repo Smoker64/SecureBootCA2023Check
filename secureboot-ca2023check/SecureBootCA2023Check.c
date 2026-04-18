@@ -80,11 +80,13 @@ static int contains_ascii_case_insensitive(const uint8_t *buf, size_t len, const
 
 static int read_uefi_variable(const wchar_t *varName, uint8_t **outBuf, DWORD *outSize, FILETIME *outLastWrite) {
     DWORD attrs = 0;
-    DWORD bufSize = 128 * 1024;
+    
+    // Start with larger buffer for db which can be several hundred KB
+    DWORD bufSize = 512 * 1024;  // 512 KB initial
     uint8_t *buf = NULL;
 
-    for (int attempt = 0; attempt < 7; attempt++) {
-        buf = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, bufSize);
+    for (int attempt = 0; attempt < 10; attempt++) {
+        buf = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bufSize);
         if (!buf) return -2;
 
         DWORD got = GetFirmwareEnvironmentVariableExW(varName, EFI_GLOBAL_VARIABLE_GUID, buf, bufSize, &attrs);
@@ -92,10 +94,21 @@ static int read_uefi_variable(const wchar_t *varName, uint8_t **outBuf, DWORD *o
             DWORD err = GetLastError();
             HeapFree(GetProcessHeap(), 0, buf);
             buf = NULL;
-            if (err == ERROR_INSUFFICIENT_BUFFER) { 
-                bufSize *= 2; 
-                continue; 
+            
+            if (err == ERROR_INSUFFICIENT_BUFFER) {
+                // Double the buffer size and try again
+                bufSize *= 2;
+                if (bufSize > 8 * 1024 * 1024) {
+                    // Safety: don't go above 8 MB
+                    return -1;
+                }
+                continue;
             }
+            
+            // Other errors
+            if (err == ERROR_INVALID_FUNCTION) return -3; // UEFI not supported
+            if (err == ERROR_PRIVILEGE_NOT_HELD) return -4; // Need admin
+            
             return -1;
         }
 
